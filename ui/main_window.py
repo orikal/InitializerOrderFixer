@@ -321,6 +321,9 @@ class MainWindow(QMainWindow):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setContentsMargins(CELL_PADDING_H, CELL_PADDING_V, CELL_PADDING_H, CELL_PADDING_V)
         layout.setSpacing(0)
+        tooltip = "Include this issue when applying selected fixes"
+        container.setToolTip(tooltip)
+        checkbox.setToolTip(tooltip)
         return container
 
     def _checkbox_from_cell(self, row: int) -> QCheckBox | None:
@@ -335,6 +338,7 @@ class MainWindow(QMainWindow):
     def _table_item(self, text: str) -> QTableWidgetItem:
         item = QTableWidgetItem(text)
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setToolTip(text)
         return item
 
     def _populate_table(self) -> None:

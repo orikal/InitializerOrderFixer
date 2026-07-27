@@ -12,6 +12,9 @@ VARIABLES_CELL_PADDING_H = 4
 VARIABLES_CELL_PADDING_V = 4
 LONG_VARIABLE_NAME_THRESHOLD = 20
 STACKED_LAYOUT_EXTRA_HEIGHT = 10
+BEFORE_BORDER_STYLE = "border: 2px solid #dc3545; border-radius: 4px; padding: 4px;"
+AFTER_BORDER_STYLE = "border: 2px solid #28a745; border-radius: 4px; padding: 4px;"
+LABEL_BORDER_EXTRA = 12  # 2px border + 4px padding on each side
 
 
 class WordWrapDelegate(QStyledItemDelegate):
@@ -57,6 +60,10 @@ class FilesCellWidget(QWidget):
         self._label.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self._label)
 
+        tooltip = self._plain_text()
+        self.setToolTip(tooltip)
+        self._label.setToolTip(tooltip)
+
     def _rich_text(self) -> str:
         header = html.escape(self._header_path)
         source = html.escape(self._source_path)
@@ -99,10 +106,12 @@ class VariablesCellWidget(QWidget):
         self._before_label = QLabel(before)
         self._before_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._before_label.setWordWrap(True)
+        self._before_label.setStyleSheet(BEFORE_BORDER_STYLE)
 
         self._after_label = QLabel(after)
         self._after_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._after_label.setWordWrap(True)
+        self._after_label.setStyleSheet(AFTER_BORDER_STYLE)
 
         self._build_layout()
 
@@ -157,6 +166,11 @@ class VariablesCellWidget(QWidget):
             layout.addWidget(divider)
             layout.addWidget(self._after_label, stretch=1)
 
+        tooltip = f"Current:\n{self._before}\n\nCorrect:\n{self._after}"
+        self.setToolTip(tooltip)
+        self._before_label.setToolTip(tooltip)
+        self._after_label.setToolTip(tooltip)
+
     def _text_block_height(self, text: str, width: int) -> int:
         if width < 20:
             width = 80
@@ -186,6 +200,7 @@ class VariablesCellWidget(QWidget):
             text_height = (
                 self._text_block_height(self._before, text_width)
                 + self._text_block_height(self._after, text_width)
+                + 2 * LABEL_BORDER_EXTRA
                 + STACKED_LAYOUT_EXTRA_HEIGHT
             )
         else:
@@ -193,7 +208,7 @@ class VariablesCellWidget(QWidget):
             text_height = max(
                 self._text_block_height(self._before, text_width),
                 self._text_block_height(self._after, text_width),
-            )
+            ) + LABEL_BORDER_EXTRA
         return text_height + 2 * VARIABLES_CELL_PADDING_V + 4
 
     def sizeHint(self) -> QSize:
