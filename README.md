@@ -75,6 +75,17 @@ python main.py --no-ui --path ./my-repo --action scan --exclude-dirs tests,gener
 | `1` | Issues found, or fix failures. |
 | `2` | Invalid arguments or path. |
 
+### CLI output (`--action scan`)
+
+When issues are found, output is a pipe-separated table:
+
+```
+Filename | Line number | Variables
+src\example.cpp | 10 | second, first -> first, second
+```
+
+The **Variables** column shows the current initializer order and the suggested order (`current -> suggested`).
+
 ### Azure Pipeline (multi-stage)
 
 Add a stage **after** `WindowsClone` using the included template:

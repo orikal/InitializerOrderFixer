@@ -107,12 +107,41 @@ def parse_include_dirs(raw: str, repo_path: Path) -> list[Path] | None:
     return resolved or None
 
 
+def rel_path(path_str: str, repo_path: Path) -> str:
+    try:
+        return str(Path(path_str).resolve().relative_to(repo_path.resolve()))
+    except ValueError:
+        return path_str
+
+
+def format_variables(issue: Issue) -> str:
+    current = ", ".join(issue.current_order) or "(none)"
+    suggested = ", ".join(issue.suggested_order) or "(none)"
+    if issue.has_order_mismatch and current != suggested:
+        return f"{current} -> {suggested}"
+    if issue.uninitialized_members:
+        uninitialized = ", ".join(issue.uninitialized_members)
+        if issue.current_order:
+            return f"{current} (not initialized: {uninitialized})"
+        return f"not initialized: {uninitialized}"
+    return current
+
+
+def format_scan_table(issues: list[Issue], repo_path: Path) -> str:
+    if not issues:
+        return ""
+
+    header = "Filename | Line number | Variables"
+    rows = [
+        f"{rel_path(issue.source_path, repo_path)} | {issue.line} | {format_variables(issue)}"
+        for issue in issues
+    ]
+    return "\n".join([header, *rows])
+
+
 def issue_to_dict(issue: Issue, repo_path: Path) -> dict:
     def rel(path_str: str) -> str:
-        try:
-            return str(Path(path_str).resolve().relative_to(repo_path.resolve()))
-        except ValueError:
-            return path_str
+        return rel_path(path_str, repo_path)
 
     return {
         "class": issue.class_name,
@@ -211,10 +240,7 @@ def cli_main(argv: list[str] | None = None) -> int:
 
     if action == Action.SCAN:
         if issues:
-            print(f"Found {len(issues)} initializer order issue(s).")
-            for issue in issues:
-                data = issue_to_dict(issue, repo_path)
-                print(f"  {data['class']} @ {data['source']}:{data['line']}")
+            print(format_scan_table(issues, repo_path))
             return 1
         print("No initializer order issues found.")
         return 0
