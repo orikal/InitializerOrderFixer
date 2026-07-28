@@ -1,0 +1,78 @@
+# Stage template: scan C/C++ initializer-list order (no GUI, no file changes).
+# Runs in its own stage after WindowsClone. Fails the pipeline when issues are found.
+#
+# Usage in your main pipeline (stages):
+#
+#   stages:
+#   - stage: WindowsClone
+#     jobs:
+#       - job: Clone
+#         ...
+#
+#   - template: azure-pipelines/initializer-order-check.yml
+#     parameters:
+#       dependsOnStage: WindowsClone
+#       scanPath: $(Build.SourcesDirectory)
+#       includeDirs: src,components
+#       excludeDirs: tests,build,third_party
+
+parameters:
+  - name: dependsOnStage
+    type: string
+    default: WindowsClone
+  - name: scanPath
+    type: string
+    default: $(Build.SourcesDirectory)
+  - name: includeDirs
+    type: string
+    default: ''
+  - name: excludeDirs
+    type: string
+    default: tests,build,third_party
+  - name: pythonVersion
+    type: string
+    default: '3.10'
+  - name: toolRepo
+    type: string
+    default: https://github.com/orikal/InitializerOrderFixer.git
+  - name: toolBranch
+    type: string
+    default: main
+
+stages:
+  - stage: InitializerOrderCheck
+    displayName: Initializer order check
+    dependsOn: ${{ parameters.dependsOnStage }}
+    jobs:
+      - job: ScanInitializerOrder
+        displayName: Scan C++ initializer order
+        pool:
+          vmImage: windows-latest
+        steps:
+          - checkout: self
+            displayName: Checkout source repository
+
+          - task: UsePythonVersion@0
+            displayName: Use Python
+            inputs:
+              versionSpec: ${{ parameters.pythonVersion }}
+
+          - powershell: |
+              $ErrorActionPreference = "Stop"
+              $toolDir = Join-Path $env:AGENT_TEMPDIR "initializer-order-fixer"
+              if (Test-Path $toolDir) { Remove-Item -Recurse -Force $toolDir }
+              git clone --depth 1 --branch "${{ parameters.toolBranch }}" "${{ parameters.toolRepo }}" $toolDir
+              pip install tree-sitter tree-sitter-cpp
+              $cliArgs = @(
+                "--no-ui",
+                "--path", "${{ parameters.scanPath }}",
+                "--action", "scan"
+              )
+              if ("${{ parameters.includeDirs }}") {
+                $cliArgs += @("--include-dirs", "${{ parameters.includeDirs }}")
+              }
+              if ("${{ parameters.excludeDirs }}") {
+                $cliArgs += @("--exclude-dirs", "${{ parameters.excludeDirs }}")
+              }
+              python (Join-Path $toolDir "main.py") @cliArgs
+            displayName: Scan initializer order (read-only)

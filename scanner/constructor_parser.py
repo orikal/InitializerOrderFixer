@@ -114,7 +114,11 @@ def _is_constructor(
     if len(class_part) == 2 and class_part[1] == ctor_name:
         return True, qualified, ctor_name
     if qualified == ctor_name:
-        return True, qualified, ctor_name
+        class_simple_name = outer_class.split("::")[-1] if outer_class else qualified
+        if ctor_name == class_simple_name:
+            resolved_class = outer_class if outer_class else qualified
+            return True, resolved_class, ctor_name
+        return False, None, None
     if outer_class and qualified == outer_class and ctor_name == outer_class.split("::")[-1]:
         return True, outer_class, ctor_name
     return False, None, None
@@ -128,21 +132,24 @@ def _parse_function(
     outer_class: str | None,
     results: list[ConstructorInfo],
 ) -> None:
+    is_ctor, qualified, ctor_name = _is_constructor(func_node, source_bytes, outer_class)
+    if not is_ctor or not qualified:
+        return
+
     init_list = None
     for child in func_node.children:
         if child.type == "field_initializer_list":
             init_list = child
             break
-    if init_list is None:
-        return
 
-    entries = _extract_initializer_entries(init_list, source, source_bytes)
-    if not entries:
-        return
-
-    is_ctor, qualified, ctor_name = _is_constructor(func_node, source_bytes, outer_class)
-    if not is_ctor or not qualified:
-        return
+    if init_list is not None:
+        entries = _extract_initializer_entries(init_list, source, source_bytes)
+        list_start_byte = init_list.start_byte
+        list_end_byte = init_list.end_byte
+    else:
+        entries = []
+        list_start_byte = func_node.start_byte
+        list_end_byte = func_node.start_byte
 
     results.append(
         ConstructorInfo(
@@ -152,8 +159,8 @@ def _parse_function(
             line=line_number(source, func_node.start_byte),
             start_byte=func_node.start_byte,
             entries=entries,
-            list_start_byte=init_list.start_byte,
-            list_end_byte=init_list.end_byte,
+            list_start_byte=list_start_byte,
+            list_end_byte=list_end_byte,
             full_source=source,
         )
     )
@@ -205,12 +212,16 @@ def _traverse(
                             _parse_function(
                                 decl, source, source_bytes, source_path, qualified, results
                             )
-                        elif decl.type == "declaration":
-                            for sub in decl.children:
-                                if sub.type == "function_declarator":
-                                    # declaration only — skip
-                                    pass
-                _traverse(child, source, source_bytes, source_path, namespace_stack, class_stack, results)
+                else:
+                    _traverse(
+                        child,
+                        source,
+                        source_bytes,
+                        source_path,
+                        namespace_stack,
+                        class_stack,
+                        results,
+                    )
             class_stack.pop()
         return
 
@@ -223,9 +234,26 @@ def _traverse(
         _traverse(child, source, source_bytes, source_path, namespace_stack, class_stack, results)
 
 
+def _dedupe_constructors(constructors: list[ConstructorInfo]) -> list[ConstructorInfo]:
+    seen: set[tuple[str, int, int, int]] = set()
+    unique: list[ConstructorInfo] = []
+    for ctor in constructors:
+        key = (
+            ctor.qualified_class_name,
+            ctor.line,
+            ctor.list_start_byte,
+            ctor.list_end_byte,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(ctor)
+    return unique
+
+
 def parse_source_file(path: Path) -> list[ConstructorInfo]:
     source = path.read_text(encoding="utf-8", errors="replace")
     source_bytes, root = parse_source(source)
     results: list[ConstructorInfo] = []
     _traverse(root, source, source_bytes, str(path), [], [], results)
-    return results
+    return _dedupe_constructors(results)

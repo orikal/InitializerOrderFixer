@@ -13,12 +13,17 @@ HEADER_EXTENSIONS = {".h", ".hpp"}
 SKIP_DIRS = {
     ".git",
     "build",
+    "build-coverage",
     "cmake-build-debug",
     "cmake-build-release",
     "node_modules",
     "__pycache__",
     ".venv",
     "venv",
+    "_deps",
+    "third_party",
+    "vendor",
+    "external",
 }
 
 

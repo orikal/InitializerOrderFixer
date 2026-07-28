@@ -24,6 +24,9 @@ class Issue:
     original_snippet: str
     fixed_snippet: str
     constructor_info: ConstructorInfo
+    uninitialized_members: list[str] = field(default_factory=list)
+    header_initialized_members: list[str] = field(default_factory=list)
+    has_order_mismatch: bool = True
     confidence: Confidence = Confidence.HIGH
     selected: bool = True
 

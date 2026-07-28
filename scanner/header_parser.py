@@ -28,6 +28,17 @@ def _is_static_field(field_node: Node, source_bytes: bytes) -> bool:
     return " static " in f" {lowered} " or lowered.strip().startswith("static ")
 
 
+def _has_default_initializer(field_node: Node) -> bool:
+    for child in field_node.children:
+        if child.type in {"=", "initializer_list", "call_expression", "string_literal", "number_literal"}:
+            return True
+        if child.type == "init_declarator":
+            for sub in child.children:
+                if sub.type in {"=", "initializer_list", "call_expression"}:
+                    return True
+    return False
+
+
 def _extract_member_name(field_node: Node, source_bytes: bytes) -> str | None:
     for node in walk(field_node):
         if node.type == "field_identifier":
@@ -79,6 +90,7 @@ def _members_from_body(body_node: Node, source: str, source_bytes: bytes) -> lis
                 name=name,
                 is_static=False,
                 line=line_number(source, child.start_byte),
+                has_default_initializer=_has_default_initializer(child),
             )
         )
     return members

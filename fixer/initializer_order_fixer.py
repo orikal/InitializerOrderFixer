@@ -21,7 +21,11 @@ def _apply_single_issue(source: str, issue: Issue) -> str:
 
 
 def apply_fixes(issues: list[Issue]) -> FixResult:
-    selected = [i for i in issues if i.selected and i.confidence.value == "high"]
+    selected = [
+        i
+        for i in issues
+        if i.selected and i.has_order_mismatch and i.confidence.value == "high"
+    ]
     if not selected:
         return FixResult(success_count=0, failed=[])
 

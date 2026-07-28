@@ -43,6 +43,7 @@ python main.py --no-ui --path <repository>
 | `--no-ui` | Run headless (no PySide6 window). Required for CI. |
 | `--path PATH` | Repository root to scan. |
 | `--action {scan,fix,report}` | `scan` — detect only; `fix` — scan and apply fixes; `report` — detailed output. Default: `scan`. |
+| `--include-dirs DIRS` | Comma-separated directories **to scan**, relative to `--path` (e.g. `src,lib/core`). When omitted, the entire repo is scanned. |
 | `--exclude-dirs DIRS` | Comma-separated directory **names** to skip (e.g. `tests,third_party`). |
 | `--report-file FILE` | Write report to file (with `--action report`; default: stdout). |
 | `--format {text,json}` | Report format for `--action report`. Default: `text`. |
@@ -59,7 +60,10 @@ python main.py --no-ui --path ./my-repo --action fix
 # Generate a JSON report
 python main.py --no-ui --path ./my-repo --action report --format json --report-file report.json
 
-# Skip specific folders
+# Scan only specific folders
+python main.py --no-ui --path ./my-repo --action scan --include-dirs src,lib
+
+# Skip specific folders (when scanning the whole repo)
 python main.py --no-ui --path ./my-repo --action scan --exclude-dirs tests,generated,vendor
 ```
 
@@ -71,19 +75,32 @@ python main.py --no-ui --path ./my-repo --action scan --exclude-dirs tests,gener
 | `1` | Issues found, or fix failures. |
 | `2` | Invalid arguments or path. |
 
-### Azure Pipeline
+### Azure Pipeline (multi-stage)
+
+Add a stage **after** `WindowsClone` using the included template:
 
 ```yaml
-- task: UsePythonVersion@0
-  inputs:
-    versionSpec: '3.10'
+stages:
+  - stage: WindowsClone
+    jobs:
+      - job: Clone
+        pool:
+          vmImage: windows-latest
+        steps:
+          - checkout: self
+          # ... your existing steps ...
 
-- script: |
-    pip install tree-sitter tree-sitter-cpp
-    python main.py --no-ui --path $(Build.SourcesDirectory) --action scan --exclude-dirs tests,build
-  displayName: Check initializer order
-  workingDirectory: $(Build.SourcesDirectory)
+  - template: azure-pipelines/initializer-order-check.yml
+    parameters:
+      dependsOnStage: WindowsClone
+      scanPath: $(Build.SourcesDirectory)
+      includeDirs: src,components
+      excludeDirs: tests,build,third_party
 ```
+
+The `InitializerOrderCheck` stage runs only after `WindowsClone` succeeds. If initializer issues are found, the stage fails and blocks later stages that `dependsOn: InitializerOrderCheck`.
+
+See `azure-pipelines/pipeline.example.yml` for a full skeleton.
 
 For headless CI you only need `tree-sitter` and `tree-sitter-cpp` (PySide6 is not required when using `--no-ui`).
 

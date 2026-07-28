@@ -28,7 +28,14 @@ from resources import logo_icon_path
 from ui.folder_select_dialog import FolderSelectDialog
 from ui.preview_dialog import PreviewDialog
 from ui.scan_worker import ScanWorker
-from ui.variables_cell import FilesCellWidget, VariablesCellWidget, WordWrapDelegate, CELL_PADDING_H, CELL_PADDING_V
+from ui.variables_cell import (
+    ClassCellWidget,
+    FilesCellWidget,
+    VariablesCellWidget,
+    WordWrapDelegate,
+    CELL_PADDING_H,
+    CELL_PADDING_V,
+)
 
 
 class MainWindow(QMainWindow):
@@ -96,7 +103,7 @@ class MainWindow(QMainWindow):
         self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._table.setTextElideMode(Qt.TextElideMode.ElideNone)
         self._table.setItemDelegate(WordWrapDelegate(self._table))
-        self._table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self._table.verticalHeader().setMinimumSectionSize(32)
         self._table.verticalHeader().setDefaultSectionSize(40)
         header = self._table.horizontalHeader()
@@ -116,8 +123,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._table, stretch=1)
 
         self._updating_header_checkbox = False
+        self._populating_table = False
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(50)
+        self._resize_timer.timeout.connect(self._apply_table_row_heights)
         self._setup_select_header()
-        header.sectionResized.connect(lambda *_: self._resize_table_rows())
+        header.sectionResized.connect(lambda *_: self._schedule_table_row_resize())
         header.geometriesChanged.connect(self._update_select_header_geometry)
 
     @staticmethod
@@ -130,11 +142,19 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event) -> None:  # noqa: ANN001 — Qt API
         super().resizeEvent(event)
-        if self._table.rowCount() > 0:
-            QTimer.singleShot(0, self._resize_table_rows)
+        if self._table.rowCount() > 0 and not self._populating_table:
+            self._schedule_table_row_resize()
+
+    def _schedule_table_row_resize(self) -> None:
+        if self._populating_table or self._table.rowCount() == 0:
+            return
+        self._resize_timer.start()
 
     def _resize_table_rows(self) -> None:
-        if self._table.rowCount() == 0:
+        self._schedule_table_row_resize()
+
+    def _apply_table_row_heights(self) -> None:
+        if self._table.rowCount() == 0 or self._populating_table:
             return
 
         from PySide6.QtWidgets import QStyleOptionViewItem
@@ -143,7 +163,7 @@ class MainWindow(QMainWindow):
         for row in range(self._table.rowCount()):
             max_height = self._table.verticalHeader().minimumSectionSize()
 
-            for col in (1, 3):
+            for col in (3,):
                 item = self._table.item(row, col)
                 if item is None:
                     continue
@@ -155,11 +175,13 @@ class MainWindow(QMainWindow):
                 hint = delegate.sizeHint(option, index)
                 max_height = max(max_height, hint.height())
 
-            for col in (0, 2, 4):
+            for col in (0, 1, 2, 4):
                 widget = self._table.cellWidget(row, col)
                 if widget is None:
                     continue
-                if col in (2, 4) and isinstance(widget, (FilesCellWidget, VariablesCellWidget)):
+                if col in (1, 2, 4) and isinstance(
+                    widget, (ClassCellWidget, FilesCellWidget, VariablesCellWidget)
+                ):
                     col_width = self._table.columnWidth(col)
                     max_height = max(max_height, widget.height_for_column_width(col_width))
                 else:
@@ -244,21 +266,38 @@ class MainWindow(QMainWindow):
         self._stats_label.setText(f"Files: {done}/{total} | Issues: {issue_count}")
 
     def _on_scan_finished(self, issues: list) -> None:
-        self._issues = issues
-        self._all_selected = True
-        self._populate_table()
-        self._update_select_header_visibility()
-        if self._issues:
-            self._update_header_checkbox_state()
-        self._set_scanning(False)
-        self._current_file_label.setText(f"Scan complete. Found {len(issues)} issue(s).")
-        self._stats_label.setText(
-            f"Files: {self._progress_bar.maximum()}/{self._progress_bar.maximum()} | Issues: {len(issues)}"
-        )
+        try:
+            self._issues = issues
+            self._populate_table()
+            self._update_select_header_visibility()
+            if self._issues:
+                self._update_header_checkbox_state()
+            self._current_file_label.setText(f"Scan complete. Found {len(issues)} issue(s).")
+            self._stats_label.setText(
+                f"Files: {self._progress_bar.maximum()}/{self._progress_bar.maximum()} | Issues: {len(issues)}"
+            )
+        except Exception as exc:  # noqa: BLE001 — show UI failures instead of crashing
+            self._issues = []
+            self._table.setRowCount(0)
+            self._update_select_header_visibility()
+            QMessageBox.critical(
+                self,
+                "Display Error",
+                f"Scan found {len(issues)} issue(s), but displaying results failed:\n{exc}",
+            )
+        finally:
+            self._set_scanning(False)
 
     def _on_scan_error(self, message: str) -> None:
         self._set_scanning(False)
         QMessageBox.critical(self, "Scan Error", message)
+
+    def _class_cell_widget(self, issue: Issue) -> ClassCellWidget:
+        return ClassCellWidget(
+            issue.class_name,
+            issue.uninitialized_members,
+            issue.header_initialized_members,
+        )
 
     def _files_cell_widget(self, issue: Issue) -> FilesCellWidget:
         return FilesCellWidget(
@@ -266,7 +305,9 @@ class MainWindow(QMainWindow):
             self._rel_path(issue.source_path),
         )
 
-    def _variables_cell_widget(self, issue: Issue) -> VariablesCellWidget:
+    def _variables_cell_widget(self, issue: Issue) -> VariablesCellWidget | None:
+        if not issue.has_order_mismatch:
+            return None
         return VariablesCellWidget(issue.current_order_str, issue.correct_order_str)
 
     def _setup_select_header(self) -> None:
@@ -342,21 +383,37 @@ class MainWindow(QMainWindow):
         return item
 
     def _populate_table(self) -> None:
+        self._populating_table = True
+        self._resize_timer.stop()
+        self._table.setUpdatesEnabled(False)
+        self._table.setRowCount(0)
         self._table.setRowCount(len(self._issues))
-        for row, issue in enumerate(self._issues):
-            checkbox = QCheckBox()
-            checkbox.setChecked(issue.selected)
-            checkbox.stateChanged.connect(
-                lambda state, r=row: self._on_row_checkbox_changed(r, state == Qt.CheckState.Checked.value)
-            )
 
-            self._table.setCellWidget(row, 0, self._centered_checkbox(checkbox))
-            self._table.setItem(row, 1, self._table_item(issue.class_name))
-            self._table.setCellWidget(row, 2, self._files_cell_widget(issue))
-            self._table.setItem(row, 3, self._table_item(str(issue.line)))
-            self._table.setCellWidget(row, 4, self._variables_cell_widget(issue))
+        try:
+            for row, issue in enumerate(self._issues):
+                checkbox = QCheckBox()
+                checkbox.setChecked(issue.selected)
+                checkbox.stateChanged.connect(
+                    lambda state, r=row: self._on_row_checkbox_changed(
+                        r, state == Qt.CheckState.Checked.value
+                    )
+                )
 
-        QTimer.singleShot(0, self._resize_table_rows)
+                self._table.setCellWidget(row, 0, self._centered_checkbox(checkbox))
+                self._table.setCellWidget(row, 1, self._class_cell_widget(issue))
+                self._table.setCellWidget(row, 2, self._files_cell_widget(issue))
+                self._table.setItem(row, 3, self._table_item(str(issue.line)))
+                variables_widget = self._variables_cell_widget(issue)
+                if variables_widget is not None:
+                    self._table.setCellWidget(row, 4, variables_widget)
+                else:
+                    self._table.removeCellWidget(row, 4)
+                    self._table.setItem(row, 4, self._table_item(""))
+        finally:
+            self._populating_table = False
+            self._table.setUpdatesEnabled(True)
+
+        self._apply_table_row_heights()
         if self._issues:
             self._update_select_header_geometry()
 

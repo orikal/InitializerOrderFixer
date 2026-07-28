@@ -4,7 +4,17 @@ import html
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFontMetrics
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QStyledItemDelegate, QStyleOptionViewItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 CELL_PADDING_H = 8
 CELL_PADDING_V = 8
@@ -14,7 +24,112 @@ LONG_VARIABLE_NAME_THRESHOLD = 20
 STACKED_LAYOUT_EXTRA_HEIGHT = 10
 BEFORE_BORDER_STYLE = "border: 2px solid #dc3545; border-radius: 4px; padding: 4px;"
 AFTER_BORDER_STYLE = "border: 2px solid #28a745; border-radius: 4px; padding: 4px;"
+WARNING_BUTTON_STYLE = (
+    "QPushButton {"
+    " color: #dc3545;"
+    " font-weight: bold;"
+    " font-size: 14px;"
+    " border: 2px solid #dc3545;"
+    " border-radius: 13px;"
+    " background-color: #fff5f5;"
+    " padding: 0;"
+    "}"
+    "QPushButton:hover {"
+    " background-color: #fde8ea;"
+    " border-color: #c82333;"
+    " color: #c82333;"
+    "}"
+)
 LABEL_BORDER_EXTRA = 12  # 2px border + 4px padding on each side
+
+
+class ClassCellWidget(QWidget):
+    def __init__(
+        self,
+        class_name: str,
+        uninitialized_members: list[str],
+        header_initialized_members: list[str] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._class_name = class_name
+        self._uninitialized_members = list(uninitialized_members)
+        self._header_initialized_members = list(header_initialized_members or [])
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(CELL_PADDING_H, CELL_PADDING_V, CELL_PADDING_H, CELL_PADDING_V)
+        layout.setSpacing(4)
+
+        self._name_label = QLabel(self._display_text())
+        self._name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._name_label.setWordWrap(True)
+        layout.addWidget(self._name_label, stretch=1)
+
+        self._warning_btn: QPushButton | None = None
+        if self._uninitialized_members:
+            self._warning_btn = QPushButton("!")
+            self._warning_btn.setFixedSize(26, 26)
+            self._warning_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._warning_btn.setStyleSheet(WARNING_BUTTON_STYLE)
+            self._warning_btn.setToolTip("Show member initialization details")
+            self._warning_btn.clicked.connect(self._show_member_details)
+            layout.addWidget(self._warning_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        tooltip = class_name
+        if self._uninitialized_members:
+            tooltip += "\n\nNot in initializer list:\n" + "\n".join(
+                f"  • {name}" for name in self._uninitialized_members
+            )
+        self.setToolTip(tooltip)
+        self._name_label.setToolTip(tooltip)
+
+    def _display_text(self) -> str:
+        if not self._uninitialized_members:
+            return self._class_name
+        members = "\n".join(f"  • {name}" for name in self._uninitialized_members)
+        return f"{self._class_name}\n\nNot initialized:\n{members}"
+
+    @staticmethod
+    def _format_member_list(members: list[str]) -> str:
+        if not members:
+            return "  (none)"
+        return "\n".join(f"  • {name}" for name in members)
+
+    def _show_member_details(self) -> None:
+        message = (
+            "Declared in the header but not initialized in the constructor:\n"
+            f"{self._format_member_list(self._uninitialized_members)}\n\n"
+            "Declared and initialized in the header:\n"
+            f"{self._format_member_list(self._header_initialized_members)}"
+        )
+        QMessageBox.warning(
+            self,
+            f"Member Initialization — {self._class_name}",
+            message,
+        )
+
+    def height_for_column_width(self, width: int) -> int:
+        if width < 20:
+            width = 80
+        content_width = max(20, width - 2 * CELL_PADDING_H - (30 if self._warning_btn else 0))
+        metrics = QFontMetrics(self.font())
+        rect = metrics.boundingRect(
+            0,
+            0,
+            content_width,
+            0,
+            int(Qt.TextFlag.TextWordWrap),
+            self._display_text(),
+        )
+        return max(rect.height(), 26 if self._warning_btn else 0) + 2 * CELL_PADDING_V + 4
+
+    def sizeHint(self) -> QSize:
+        total_width = self.width() if self.width() > 10 else 200
+        return QSize(total_width, self.height_for_column_width(total_width))
+
+    def minimumSizeHint(self) -> QSize:
+        width = self.width() if self.width() > 10 else 200
+        return QSize(width, self.height_for_column_width(width))
 
 
 class WordWrapDelegate(QStyledItemDelegate):

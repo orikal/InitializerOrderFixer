@@ -46,6 +46,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--include-dirs",
+        metavar="DIRS",
+        default="",
+        help=(
+            "Comma-separated directories to scan, relative to --path "
+            "(e.g. src,lib/core). When set, only these folders are scanned."
+        ),
+    )
+    parser.add_argument(
         "--exclude-dirs",
         metavar="DIRS",
         default="",
@@ -72,6 +81,32 @@ def parse_exclude_dirs(raw: str) -> set[str]:
     return {part.strip() for part in raw.split(",") if part.strip()}
 
 
+def parse_include_dirs(raw: str, repo_path: Path) -> list[Path] | None:
+    if not raw.strip():
+        return None
+
+    resolved: list[Path] = []
+    repo_resolved = repo_path.resolve()
+    for part in raw.split(","):
+        entry = part.strip()
+        if not entry:
+            continue
+        path = Path(entry)
+        if not path.is_absolute():
+            path = repo_resolved / entry
+        path = path.resolve()
+        if not path.is_dir():
+            raise ValueError(f"Include directory not found: {entry}")
+        try:
+            path.relative_to(repo_resolved)
+        except ValueError as exc:
+            raise ValueError(
+                f"Include directory must be under repository root: {entry}"
+            ) from exc
+        resolved.append(path)
+    return resolved or None
+
+
 def issue_to_dict(issue: Issue, repo_path: Path) -> dict:
     def rel(path_str: str) -> str:
         try:
@@ -87,6 +122,9 @@ def issue_to_dict(issue: Issue, repo_path: Path) -> dict:
         "line": issue.line,
         "current_order": issue.current_order,
         "suggested_order": issue.suggested_order,
+        "uninitialized_members": issue.uninitialized_members,
+        "header_initialized_members": issue.header_initialized_members,
+        "has_order_mismatch": issue.has_order_mismatch,
         "confidence": issue.confidence.value,
     }
 
@@ -101,8 +139,18 @@ def format_text_report(issues: list[Issue], repo_path: Path) -> str:
         lines.append(f"{idx}. {data['class']}::{data['constructor']}")
         lines.append(f"   Source: {data['source']}:{data['line']}")
         lines.append(f"   Header: {data['header']}")
-        lines.append(f"   Current:   {', '.join(data['current_order'])}")
-        lines.append(f"   Suggested: {', '.join(data['suggested_order'])}")
+        lines.append(f"   Current:   {', '.join(data['current_order']) or '(none)'}")
+        lines.append(f"   Suggested: {', '.join(data['suggested_order']) or '(none)'}")
+        if data["uninitialized_members"]:
+            lines.append(
+                "   Not initialized in constructor: "
+                + ", ".join(data["uninitialized_members"])
+            )
+        if data["header_initialized_members"]:
+            lines.append(
+                "   Initialized in header: "
+                + ", ".join(data["header_initialized_members"])
+            )
         lines.append("")
     return "\n".join(lines)
 
@@ -123,10 +171,18 @@ def write_report(content: str, report_file: Path | None) -> None:
         sys.stdout.write(content)
 
 
-def run_scan(repo_path: Path, exclude_dirs: set[str]) -> list[Issue]:
+def run_scan(
+    repo_path: Path,
+    exclude_dirs: set[str],
+    include_dirs: list[Path] | None = None,
+) -> list[Issue]:
     if not repo_path.is_dir():
         raise ValueError(f"Not a directory: {repo_path}")
-    return scan_repository(repo_path, exclude_dirs=exclude_dirs or None)
+    return scan_repository(
+        repo_path,
+        selected_dirs=include_dirs,
+        exclude_dirs=exclude_dirs or None,
+    )
 
 
 def cli_main(argv: list[str] | None = None) -> int:
@@ -147,7 +203,8 @@ def cli_main(argv: list[str] | None = None) -> int:
     action = Action(args.action)
 
     try:
-        issues = run_scan(repo_path, exclude_dirs)
+        include_dirs = parse_include_dirs(args.include_dirs, repo_path)
+        issues = run_scan(repo_path, exclude_dirs, include_dirs)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

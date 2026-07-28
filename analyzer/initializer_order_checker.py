@@ -95,6 +95,37 @@ def _member_names_in_init(entries: list[InitializerEntry]) -> list[str]:
     return [e.member_name for e in entries if e.member_name and not e.is_base_or_unknown]
 
 
+def _uninitialized_members(class_info: ClassInfo, ctor: ConstructorInfo) -> list[str]:
+    initialized = set(_member_names_in_init(ctor.entries))
+    return [
+        member.name
+        for member in class_info.members
+        if not member.is_static
+        and not member.has_default_initializer
+        and member.name not in initialized
+    ]
+
+
+def _header_initialized_members(class_info: ClassInfo) -> list[str]:
+    return [
+        member.name
+        for member in class_info.members
+        if not member.is_static and member.has_default_initializer
+    ]
+
+
+def _has_order_mismatch(declared: list[str], current: list[str]) -> bool:
+    if len(current) < 2:
+        return False
+
+    declared_subset = [member for member in declared if member in current]
+    if len(declared_subset) < 2:
+        return False
+
+    current_subset = [member for member in current if member in set(declared)]
+    return current_subset != declared_subset
+
+
 def _reorder_entries(
     entries: list[InitializerEntry],
     declared_order: list[str],
@@ -189,33 +220,35 @@ def check_constructor(
         return None
 
     current = _member_names_in_init(ctor.entries)
-    if len(current) < 2:
+    uninitialized = _uninitialized_members(class_info, ctor)
+    has_order_issue = _has_order_mismatch(declared, current)
+
+    if not has_order_issue and not uninitialized:
         return None
 
-    declared_subset = [m for m in declared if m in current]
-    if len(declared_subset) < 2:
-        return None
-
-    current_subset = [m for m in current if m in set(declared)]
-    if current_subset == declared_subset:
-        return None
-
-    reordered = _reorder_entries(ctor.entries, declared)
-    suggested = _member_names_in_init(reordered)
-    moving = _members_that_move(current, suggested)
-
-    fixed_source = _replace_initializer_list(ctor.full_source, ctor, reordered)
-    fixed_ctor = ConstructorInfo(
-        qualified_class_name=ctor.qualified_class_name,
-        constructor_name=ctor.constructor_name,
-        source_path=ctor.source_path,
-        line=ctor.line,
-        start_byte=ctor.start_byte,
-        entries=reordered,
-        list_start_byte=ctor.list_start_byte,
-        list_end_byte=ctor.list_end_byte,
-        full_source=fixed_source,
-    )
+    if has_order_issue:
+        reordered = _reorder_entries(ctor.entries, declared)
+        suggested = _member_names_in_init(reordered)
+        moving = _members_that_move(current, suggested)
+        fixed_source = _replace_initializer_list(ctor.full_source, ctor, reordered)
+        fixed_ctor = ConstructorInfo(
+            qualified_class_name=ctor.qualified_class_name,
+            constructor_name=ctor.constructor_name,
+            source_path=ctor.source_path,
+            line=ctor.line,
+            start_byte=ctor.start_byte,
+            entries=reordered,
+            list_start_byte=ctor.list_start_byte,
+            list_end_byte=ctor.list_end_byte,
+            full_source=fixed_source,
+        )
+        original_snippet = _extract_change_snippet(ctor.full_source, ctor, moving)
+        fixed_snippet = _extract_change_snippet(fixed_source, fixed_ctor, moving)
+    else:
+        reordered = ctor.entries
+        suggested = current
+        original_snippet = _extract_change_snippet(ctor.full_source, ctor, set())
+        fixed_snippet = original_snippet
 
     return Issue(
         class_name=class_info.qualified_name,
@@ -226,11 +259,14 @@ def check_constructor(
         declared_order=declared,
         current_order=current,
         suggested_order=suggested,
-        original_snippet=_extract_change_snippet(ctor.full_source, ctor, moving),
-        fixed_snippet=_extract_change_snippet(fixed_source, fixed_ctor, moving),
+        original_snippet=original_snippet,
+        fixed_snippet=fixed_snippet,
         constructor_info=ctor,
+        uninitialized_members=uninitialized,
+        header_initialized_members=_header_initialized_members(class_info),
+        has_order_mismatch=has_order_issue,
         confidence=Confidence.HIGH,
-        selected=True,
+        selected=has_order_issue,
     )
 
 
@@ -239,8 +275,20 @@ def check_all(
     classes: dict[str, ClassInfo],
 ) -> list[Issue]:
     issues: list[Issue] = []
+    seen: set[tuple[str, int, str, tuple[str, ...], tuple[str, ...]]] = set()
     for ctor in constructors:
         issue = check_constructor(ctor, classes)
-        if issue:
-            issues.append(issue)
+        if issue is None:
+            continue
+        key = (
+            issue.source_path,
+            issue.line,
+            issue.class_name,
+            tuple(issue.current_order),
+            tuple(issue.uninitialized_members),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        issues.append(issue)
     return issues

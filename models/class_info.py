@@ -8,6 +8,7 @@ class MemberInfo:
     name: str
     is_static: bool = False
     line: int = 0
+    has_default_initializer: bool = False
 
 
 @dataclass
