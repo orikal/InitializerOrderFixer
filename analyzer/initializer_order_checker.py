@@ -270,6 +270,16 @@ def check_constructor(
     )
 
 
+def sort_issues(issues: list[Issue]) -> list[Issue]:
+    """Order-mismatch issues first, then uninitialized-only issues."""
+
+    def sort_key(issue: Issue) -> tuple[int, str, int, str]:
+        priority = 0 if issue.has_order_mismatch else 1
+        return (priority, issue.source_path, issue.line, issue.class_name)
+
+    return sorted(issues, key=sort_key)
+
+
 def check_all(
     constructors: list[ConstructorInfo],
     classes: dict[str, ClassInfo],

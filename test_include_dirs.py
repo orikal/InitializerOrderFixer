@@ -40,6 +40,6 @@ def test_collect_source_files_with_include_dirs() -> None:
         FIXTURE_REPO,
         selected_dirs=[FIXTURE_REPO / "src"],
     )
-    assert len(src_files) < len(all_files)
+    assert all(f.suffix.lower() in {".cpp", ".c"} for f in all_files)
+    assert len(src_files) == len(all_files)
     assert all("src" in str(f) for f in src_files)
-    assert not any("include" in str(f) and f.suffix == ".cpp" for f in src_files)

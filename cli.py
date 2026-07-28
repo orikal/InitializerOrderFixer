@@ -139,6 +139,11 @@ def format_scan_table(issues: list[Issue], repo_path: Path) -> str:
     return "\n".join([header, *rows])
 
 
+def ci_blocking_issues(issues: list[Issue]) -> list[Issue]:
+    """Issues that should fail CI — initializer order mismatch only."""
+    return [issue for issue in issues if issue.has_order_mismatch]
+
+
 def issue_to_dict(issue: Issue, repo_path: Path) -> dict:
     def rel(path_str: str) -> str:
         return rel_path(path_str, repo_path)
@@ -241,8 +246,10 @@ def cli_main(argv: list[str] | None = None) -> int:
     if action == Action.SCAN:
         if issues:
             print(format_scan_table(issues, repo_path))
+        if ci_blocking_issues(issues):
             return 1
-        print("No initializer order issues found.")
+        if not issues:
+            print("No initializer order issues found.")
         return 0
 
     if action == Action.REPORT:
@@ -251,14 +258,15 @@ def cli_main(argv: list[str] | None = None) -> int:
         else:
             content = format_text_report(issues, repo_path)
         write_report(content, args.report_file)
-        return 1 if issues else 0
+        return 1 if ci_blocking_issues(issues) else 0
 
     # Action.FIX
-    if not issues:
+    blocking = ci_blocking_issues(issues)
+    if not blocking:
         print("No initializer order issues found.")
         return 0
 
-    result = apply_fixes(issues)
+    result = apply_fixes(blocking)
     print(f"Applied fixes to {result.success_count} issue(s).")
     if result.failed:
         for path, err in result.failed:

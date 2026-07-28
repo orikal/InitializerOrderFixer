@@ -43,12 +43,18 @@ def test_scan_does_not_flood_with_inline_methods() -> None:
         )
         (root / "src" / "Widget.cpp").write_text(
             """#include "../include/Widget.hpp"
+
+Widget::Widget()
+{
+}
 """,
             encoding="utf-8",
         )
         issues = scan_repository(root)
         assert len(issues) == 1
         assert issues[0].class_name == "Widget"
+        assert issues[0].source_path.endswith("Widget.cpp")
+        assert issues[0].header_path.endswith("Widget.hpp")
         assert issues[0].uninitialized_members == ["id", "count"]
 
 

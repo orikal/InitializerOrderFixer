@@ -5,10 +5,12 @@ import html
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -41,6 +43,58 @@ WARNING_BUTTON_STYLE = (
     "}"
 )
 LABEL_BORDER_EXTRA = 12  # 2px border + 4px padding on each side
+
+
+def _format_member_list(members: list[str]) -> str:
+    if not members:
+        return "  (none)"
+    return "\n".join(f"  • {name}" for name in members)
+
+
+def format_member_details_message(
+    uninitialized_members: list[str],
+    header_initialized_members: list[str],
+) -> str:
+    return (
+        "Declared in the header but not initialized in the constructor:\n"
+        f"{_format_member_list(uninitialized_members)}\n\n"
+        "Declared and initialized in the header:\n"
+        f"{_format_member_list(header_initialized_members)}"
+    )
+
+
+class MemberInitializationDialog(QDialog):
+    def __init__(
+        self,
+        class_name: str,
+        uninitialized_members: list[str],
+        header_initialized_members: list[str],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Member Initialization — {class_name}")
+        self.resize(520, 340)
+
+        message = format_member_details_message(
+            uninitialized_members,
+            header_initialized_members,
+        )
+
+        text_edit = QPlainTextEdit(message)
+        text_edit.setReadOnly(True)
+        text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        text_edit.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(text_edit)
+        layout.addWidget(buttons)
 
 
 class ClassCellWidget(QWidget):
@@ -89,24 +143,14 @@ class ClassCellWidget(QWidget):
         members = "\n".join(f"  • {name}" for name in self._uninitialized_members)
         return f"{self._class_name}\n\nNot initialized:\n{members}"
 
-    @staticmethod
-    def _format_member_list(members: list[str]) -> str:
-        if not members:
-            return "  (none)"
-        return "\n".join(f"  • {name}" for name in members)
-
     def _show_member_details(self) -> None:
-        message = (
-            "Declared in the header but not initialized in the constructor:\n"
-            f"{self._format_member_list(self._uninitialized_members)}\n\n"
-            "Declared and initialized in the header:\n"
-            f"{self._format_member_list(self._header_initialized_members)}"
-        )
-        QMessageBox.warning(
+        dialog = MemberInitializationDialog(
+            self._class_name,
+            self._uninitialized_members,
+            self._header_initialized_members,
             self,
-            f"Member Initialization — {self._class_name}",
-            message,
         )
+        dialog.exec()
 
     def height_for_column_width(self, width: int) -> int:
         if width < 20:
